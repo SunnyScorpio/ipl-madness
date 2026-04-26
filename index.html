@@ -2,7 +2,7 @@
 <!--
   ipl-madness — notes for future-me
 
-  Live at: https://<your-username>.github.io/ipl-madness/
+  Live at: https://SunnyScorpio.github.io/ipl-madness/
   Reads from Google Sheet: 1VgNuBgScnWmENeMt2PK1qoZZ_57hPdvA, gid 2127335045
                            (configured in the SHEET_ID / GID consts below)
 
@@ -158,11 +158,52 @@
   .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 
   main { padding: 32px; max-width: 1400px; margin: 0 auto; }
-  .panel { display: none; animation: fadeIn 0.3s ease; }
-  .panel.active { display: block; }
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(4px); }
+  .panel { display: none; }
+  .panel.active {
+    display: block;
+    animation: slideIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Brand entrance (one-time on page load) ─────────── */
+  .brand {
+    animation: brandIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .brand .dot {
+    display: inline-block;
+    animation: dotPop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.5s both;
+  }
+  @keyframes brandIn {
+    from { opacity: 0; transform: translateY(-12px); letter-spacing: -0.05em; }
+    to   { opacity: 1; transform: translateY(0);     letter-spacing: -0.02em; }
+  }
+  @keyframes dotPop {
+    0%   { transform: scale(0) rotate(-180deg); opacity: 0; }
+    100% { transform: scale(1) rotate(0deg);    opacity: 1; }
+  }
+
+  /* ── Stats cards: cascade in on first render ────────── */
+  .stat {
+    opacity: 0;
+    animation: statIn 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .stat:nth-child(1) { animation-delay: 0.05s; }
+  .stat:nth-child(2) { animation-delay: 0.15s; }
+  .stat:nth-child(3) { animation-delay: 0.25s; }
+  .stat:nth-child(4) { animation-delay: 0.35s; }
+  @keyframes statIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0)    scale(1);    }
+  }
+  .stat {
+    transition: transform 0.2s, border-color 0.2s;
+  }
+  .stat:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
   }
 
   .stats-bar {
@@ -201,17 +242,54 @@
     gap: 16px; align-items: center;
     padding: 16px 24px;
     border-bottom: 1px solid var(--line);
-    transition: background 0.15s;
+    transition: background 0.2s, transform 0.2s;
   }
   .lb-row:last-child { border-bottom: none; }
-  .lb-row:hover { background: var(--panel-2); }
+  .lb-row:hover { background: var(--panel-2); transform: translateX(4px); }
   .lb-row.head {
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.1em;
     background: var(--panel-2);
   }
+  .lb-row.head { transform: none !important; }
   .lb-row.head:hover { background: var(--panel-2); }
+
+  /* Cascade rows in from bottom-up so the leader lands last (a payoff) */
+  .lb-row:not(.head) {
+    opacity: 0;
+    animation: rowIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  @keyframes rowIn {
+    from { opacity: 0; transform: translateX(-16px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Leader (#1) gets a subtle gold shimmer that loops slowly */
+  .lb-row.leader {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(245, 197, 66, 0.06) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: rowIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both,
+               leaderShimmer 4s ease-in-out infinite 1s;
+  }
+  @keyframes leaderShimmer {
+    0%, 100% { background-position: -100% 0; }
+    50%      { background-position:  100% 0; }
+  }
+
+  /* Big points number gets a gentle pulse on the leader */
+  .lb-row.leader .points {
+    animation: pointsPulse 3s ease-in-out infinite 1.5s;
+  }
+  @keyframes pointsPulse {
+    0%, 100% { text-shadow: 0 0 0    rgba(255, 107, 26, 0); }
+    50%      { text-shadow: 0 0 12px rgba(255, 107, 26, 0.4); }
+  }
   .rank {
     font-family: 'Bebas Neue', sans-serif;
     font-size: 28px; color: var(--muted);
@@ -257,6 +335,12 @@
   }
   .matches-table th:last-child, .matches-table td:last-child { border-right: none; }
   .matches-table tr:last-child td { border-bottom: none; }
+  .matches-table tbody tr {
+    transition: background 0.15s;
+  }
+  .matches-table tbody tr:hover .pick.good { background: rgba(87,199,119,0.28); }
+  .matches-table tbody tr:hover .pick.bad  { background: rgba(196,100,46,0.28); }
+  .matches-table tbody tr:hover .col-match { background: var(--line); }
   .matches-table thead th {
     background: var(--panel-2);
     font-family: 'JetBrains Mono', monospace;
@@ -337,6 +421,31 @@
     color: var(--accent);
     background: var(--panel-2);
   }
+  .bracket-table .col-bracket-pts {
+    background: var(--panel-2);
+    width: 60px;
+  }
+  .bracket-table .col-winner {
+    font-weight: 700;
+    color: var(--accent);
+    background: rgba(255,107,26,0.08);
+  }
+  .pts-badge {
+    display: inline-block;
+    background: rgba(255,107,26,0.15);
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,107,26,0.3);
+  }
+  .pts-badge.dim {
+    background: transparent;
+    color: var(--muted);
+    border-color: var(--line);
+  }
 
   .banner {
     background: rgba(245, 197, 66, 0.08);
@@ -362,6 +471,39 @@
   }
   footer a { color: var(--muted); }
   footer a:hover { color: var(--accent); }
+
+  /* Brief flash on the live indicator when fresh data arrives */
+  .tagline .live.flash {
+    animation: freshPulse 1.2s ease-out;
+  }
+  @keyframes freshPulse {
+    0%   { box-shadow: 0 0 0 0   rgba(87,199,119,0.7); transform: scale(1); }
+    20%  { transform: scale(1.6); }
+    100% { box-shadow: 0 0 0 24px rgba(87,199,119,0);   transform: scale(1); }
+  }
+
+  /* Refresh button: small bounce when click registers */
+  .refresh-btn:active:not(:disabled) {
+    transform: scale(0.96);
+    transition: transform 0.1s;
+  }
+
+  /* Stat numbers count up — give them a subtle glow during the count */
+  .stat-value.counting {
+    color: var(--accent);
+    transition: color 0.6s;
+  }
+
+  /* Respect users who've asked the OS to limit motion. Animations still
+     resolve (so layout is correct) but they're collapsed to nearly-instant. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 
   .state {
     text-align: center;
@@ -424,7 +566,10 @@
 
   <div id="bracket" class="panel">
     <p style="color: var(--muted); font-size: 13px; margin-bottom: 16px; font-family: 'JetBrains Mono', monospace;">
-      end-of-season bracket predictions · not scored yet
+      end-of-season bracket predictions ·
+      qualifiers / 3rd / 4th <span style="color: var(--accent);">5 pts</span> ·
+      finalist <span style="color: var(--accent);">10 pts</span> ·
+      champion <span style="color: var(--accent);">15 pts</span>
     </p>
     <div style="overflow-x: auto;">
       <table class="bracket-table" id="bracket-table"></table>
@@ -520,6 +665,22 @@
     return { state: 'bad', points: 0 };
   }
 
+  // ─── BRACKET SCORING ────────────────────────────────────
+  // Bracket rows are scored more heavily than league matches because they're
+  // harder, longer-horizon picks. Match against the LABEL in column 0
+  // (case-insensitive, ignoring extra whitespace) to pull the right multiplier.
+  const BRACKET_POINTS = {
+    'PLAYOFF QUALIFIER 1': 5,
+    'PLAYOFF QUALIFIER 2': 5,
+    'PLAYOFF QUALIFIER 3': 5,
+    'PLAYOFF QUALIFIER 4': 5,
+    '4TH PLACE': 5,
+    '3RD PLACE': 5,
+    '2ND PLACE': 10,       // finalist
+    'CHAMPION':  15,       // winner of the season
+  };
+  const bracketPoints = label => BRACKET_POINTS[norm(label)] ?? 0;
+
   // ─── PARSE THE SHEET ────────────────────────────────────
   function processCSV(rows) {
     const headerRow = rows[2] || [];
@@ -566,13 +727,14 @@
           picks,
         });
       } else if (date) {
-        bracketRows.push({ label: date, picks });
+        bracketRows.push({ label: date, winnerRaw, picks });
       }
     }
 
-    const totals = {}, correct = {}, abandoned = {}, wrong = {}, missed = {};
+    const totals = {}, correct = {}, abandoned = {}, wrong = {}, missed = {}, bracketTotals = {};
     players.forEach(p => {
       totals[p] = 0; correct[p] = 0; abandoned[p] = 0; wrong[p] = 0; missed[p] = 0;
+      bracketTotals[p] = 0;
     });
     let played = 0, abandonedCount = 0, future = 0;
     leagueMatches.forEach(m => {
@@ -586,6 +748,23 @@
         else if (r.state === 'aban-picked') { totals[p] += 1; abandoned[p]++; }
         else if (r.state === 'bad')         { wrong[p]++; }
         else if (m.picks[p] === '')         { missed[p]++; }
+      });
+    });
+
+    // Bracket scoring — only kicks in once the maintainer fills in winners
+    // for each bracket row (Playoff Qualifier 1–4, 2nd Place, Champion).
+    // Until then those rows stay at "TBD" and don't score.
+    bracketRows.forEach(b => {
+      const w = canonicalize(b.winnerRaw);
+      const value = bracketPoints(b.label);
+      b.points = value;       // remember the rule for display
+      b.resolved = !!w;       // truthy once maintainer fills the winner
+      if (!w || value === 0) return;
+      players.forEach(p => {
+        if (canonicalize(b.picks[p]) === w) {
+          totals[p] += value;
+          bracketTotals[p] += value;
+        }
       });
     });
 
@@ -603,7 +782,11 @@
     });
 
     const leaderboard = players
-      .map(p => ({ player: p, total: totals[p], correct: correct[p], abandoned: abandoned[p], wrong: wrong[p], missed: missed[p] }))
+      .map(p => ({
+        player: p, total: totals[p], correct: correct[p],
+        abandoned: abandoned[p], wrong: wrong[p], missed: missed[p],
+        bracket: bracketTotals[p],
+      }))
       .sort((a, b) => b.total - a.total || b.correct - a.correct || a.player.localeCompare(b.player));
 
     return {
@@ -616,6 +799,40 @@
     };
   }
 
+  // ─── ANIMATION HELPERS ──────────────────────────────────
+  // Animate a number from start to end over duration ms.
+  // Skips animation entirely if user has prefers-reduced-motion set.
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function countUp(el, end, duration = 800) {
+    if (reducedMotion || end === 0) { el.textContent = end; return; }
+    const start = 0;
+    const startTime = performance.now();
+    el.classList.add('counting');
+    function tick(now) {
+      const t = Math.min(1, (now - startTime) / duration);
+      // ease-out cubic
+      const eased = 1 - Math.pow(1 - t, 3);
+      const value = Math.round(start + (end - start) * eased);
+      el.textContent = value;
+      if (t < 1) requestAnimationFrame(tick);
+      else el.classList.remove('counting');
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // Animate "X / Y" format (e.g. "35 / 70")
+  function countUpFraction(el, num, denom, duration = 800) {
+    if (reducedMotion) { el.textContent = `${num} / ${denom}`; return; }
+    const startTime = performance.now();
+    function tick(now) {
+      const t = Math.min(1, (now - startTime) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = `${Math.round(num * eased)} / ${denom}`;
+      if (t < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
   // ─── RENDERING ──────────────────────────────────────────
   function renderStats(d) {
     document.getElementById('stats-bar').innerHTML = `
@@ -625,22 +842,28 @@
       </div>
       <div class="stat">
         <div class="stat-label">Matches Scored</div>
-        <div class="stat-value">${d.played + d.abandoned} / ${d.totalMatches}</div>
+        <div class="stat-value" id="stat-matches">0 / ${d.totalMatches}</div>
       </div>
       <div class="stat">
         <div class="stat-label">Players</div>
-        <div class="stat-value">${d.players.length}</div>
+        <div class="stat-value" id="stat-players">0</div>
       </div>
       <div class="stat">
         <div class="stat-label">Leader</div>
         <div class="stat-value">${d.leaderboard[0]?.player ?? '—'}</div>
       </div>
     `;
+    // Trigger count-ups after the cards have animated in (CSS delays go up to ~0.85s)
+    setTimeout(() => {
+      countUpFraction(document.getElementById('stat-matches'), d.played + d.abandoned, d.totalMatches);
+      countUp(document.getElementById('stat-players'), d.players.length);
+    }, reducedMotion ? 0 : 400);
   }
 
   function renderLeaderboard(d) {
     const cls = i => i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
     const denom = d.played + d.abandoned;
+    const total = d.leaderboard.length;
     document.getElementById('leaderboard-list').innerHTML = `
       <div class="lb-row head">
         <div class="rank">#</div>
@@ -648,15 +871,36 @@
         <div class="points">Points</div>
         <div class="correct-count">Correct</div>
       </div>
-      ${d.leaderboard.map((row, i) => `
-        <div class="lb-row">
-          <div class="rank ${cls(i)}">${i + 1}</div>
-          <div class="player-name">${row.player}</div>
-          <div class="points">${row.total}</div>
-          <div class="correct-count">${row.correct} / ${denom}</div>
-        </div>
-      `).join('')}
+      ${d.leaderboard.map((row, i) => {
+        // Reverse-cascade: bottom row appears first, leader lands last.
+        // Ranks 0..N-1 → delays go from (N-1)*40ms down to 0.
+        const delay = (total - 1 - i) * 0.04;
+        const leaderClass = i === 0 ? ' leader' : '';
+        return `
+          <div class="lb-row${leaderClass}" style="animation-delay: ${delay}s;">
+            <div class="rank ${cls(i)}">${i + 1}</div>
+            <div class="player-name">${row.player}</div>
+            <div class="points" data-final="${row.total}">0</div>
+            <div class="correct-count">${row.correct} / ${denom}</div>
+          </div>
+        `;
+      }).join('')}
     `;
+    // Animate the points numbers after their rows have settled
+    if (reducedMotion) {
+      document.querySelectorAll('.lb-row .points[data-final]').forEach(el => {
+        el.textContent = el.dataset.final;
+      });
+    } else {
+      const totalCascade = (total - 1) * 40 + 450;  // last row's delay + duration
+      d.leaderboard.forEach((row, i) => {
+        const rowDelay = (total - 1 - i) * 40;
+        setTimeout(() => {
+          const el = document.querySelectorAll('.lb-row:not(.head) .points')[i];
+          if (el) countUp(el, row.total, 600);
+        }, rowDelay + 200);
+      });
+    }
   }
 
   function renderMatches(d) {
@@ -716,16 +960,36 @@
       <thead>
         <tr>
           <th class="col-position">Position</th>
+          <th class="col-bracket-pts">Pts</th>
+          <th class="col-winner">Winner</th>
           ${d.players.map(p => `<th>${p}</th>`).join('')}
         </tr>
       </thead>
       <tbody>
-        ${d.bracketRows.map(r => `
-          <tr>
+        ${d.bracketRows.map(r => {
+          const w = canonicalize(r.winnerRaw);
+          const winnerCell = r.resolved
+            ? `<td class="col-winner">${w}</td>`
+            : `<td class="col-winner future">—</td>`;
+          const ptsBadge = r.points > 0
+            ? `<td class="col-bracket-pts"><span class="pts-badge">${r.points}</span></td>`
+            : `<td class="col-bracket-pts"><span class="pts-badge dim">—</span></td>`;
+          const cells = d.players.map(p => {
+            const pickRaw = r.picks[p];
+            const display = teamCode(pickRaw) || (pickRaw || '—');
+            if (!r.resolved || r.points === 0) {
+              return `<td class="pick future">${display}</td>`;
+            }
+            const correct = canonicalize(pickRaw) === w;
+            return `<td class="pick ${correct ? 'good' : 'bad'}">${display}</td>`;
+          }).join('');
+          return `<tr>
             <td class="col-position">${r.label}</td>
-            ${d.players.map(p => `<td>${teamCode(r.picks[p]) || '—'}</td>`).join('')}
-          </tr>
-        `).join('')}
+            ${ptsBadge}
+            ${winnerCell}
+            ${cells}
+          </tr>`;
+        }).join('')}
       </tbody>
     `;
   }
@@ -773,6 +1037,12 @@
       const summary = `IPL 2026 · ${d.played + d.abandoned} of ${d.totalMatches} matches scored`;
       setStatus(summary, d.discrepancies.length ? 'warn' : 'live');
       document.getElementById('generated-at').textContent = `last fetched ${fetchedAt}`;
+
+      // Brief pulse on the live indicator to confirm fresh data arrived
+      const dot = document.getElementById('status-dot');
+      dot.classList.remove('flash');
+      void dot.offsetWidth;  // force reflow so animation re-triggers
+      dot.classList.add('flash');
     } catch (err) {
       console.error(err);
       setStatus(`couldn't fetch: ${err.message}`, 'error');
