@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<!--
+  ipl-madness — notes for future-me
+
+  Live at: https://<your-username>.github.io/ipl-madness/
+  Reads from Google Sheet: 1VgNuBgScnWmENeMt2PK1qoZZ_57hPdvA, gid 2127335045
+                           (configured in the SHEET_ID / GID consts below)
+
+  Local preview: `python -m http.server 8080` then open localhost:8080.
+                 DO NOT double-click this file — Chrome blocks the Google fetch
+                 from file:// pages (CORS).
+
+  Scoring rules:  correct pick = 2, abandoned (winner == "N/A") = 1 if any
+                  pick was entered, wrong = 0, future (winner blank or "TBD")
+                  = not scored.
+
+  Fuzzy matching: case-insensitive everywhere. Aliases live in the ALIASES
+                  map in <script> below. Currently: PK→PBKS, RC→RCB, plus a
+                  PBK* prefix rule. Add more there if a friend keeps typoing.
+
+  Validation:     site computes its own totals and compares against the
+                  maintainer's totals row. Yellow banner appears only if our
+                  total drops BELOW theirs (a real bug). Bonuses from fuzzy
+                  matching go silently in our favor.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ipl-madness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;600&family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0e0f12;
+    --panel:    #16181d;
+    --panel-2:  #1c1f26;
+    --line:     #2a2e38;
+    --text:     #e8e9ec;
+    --muted:    #8c8f99;
+    --accent:   #ff6b1a;
+    --good:     #57c777;
+    --bad:      #c4642e;
+    --gold:     #f5c542;
+    --silver:   #b8bcc6;
+    --bronze:   #c98a5a;
+    --warn:     #f5c542;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(255,107,26,0.08), transparent 60%),
+      radial-gradient(800px 500px at -10% 20%, rgba(29,161,242,0.06), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: 'Manrope', system-ui, sans-serif;
+    min-height: 100vh;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    padding: 48px 32px 24px;
+    border-bottom: 1px solid var(--line);
+    position: relative;
+    overflow: hidden;
+  }
+  header::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, black, transparent);
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  .header-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; position: relative; }
+  .brand {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(48px, 8vw, 96px);
+    line-height: 0.9;
+    letter-spacing: -0.02em;
+  }
+  .brand .dot { color: var(--accent); }
+  .tagline {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 12px;
+    letter-spacing: 0.03em;
+  }
+  .tagline .live {
+    display: inline-block;
+    width: 8px; height: 8px;
+    background: var(--good);
+    border-radius: 50%;
+    margin-right: 8px;
+    box-shadow: 0 0 0 0 rgba(87,199,119,0.6);
+    animation: pulse 2s infinite;
+    vertical-align: middle;
+  }
+  .tagline .live.error { background: var(--bad); animation: none; }
+  .tagline .live.warn  { background: var(--warn); animation: none; }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(87,199,119,0.6); }
+    70%  { box-shadow: 0 0 0 10px rgba(87,199,119,0); }
+    100% { box-shadow: 0 0 0 0 rgba(87,199,119,0); }
+  }
+  .refresh-btn {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .refresh-btn:hover { background: var(--panel-2); border-color: var(--accent); }
+  .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .refresh-btn .spinner {
+    width: 12px; height: 12px;
+    border: 2px solid var(--muted);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: none;
+  }
+  .refresh-btn.loading .spinner { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .tabs {
+    display: flex; gap: 4px;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--line);
+    margin-top: 24px;
+    overflow-x: auto;
+  }
+  .tab {
+    background: none; border: none;
+    color: var(--muted);
+    font-family: 'Manrope', sans-serif;
+    font-weight: 600; font-size: 14px;
+    padding: 14px 20px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+  main { padding: 32px; max-width: 1400px; margin: 0 auto; }
+  .panel { display: none; animation: fadeIn 0.3s ease; }
+  .panel.active { display: block; }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .stats-bar {
+    display: flex; gap: 16px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 20px;
+    flex: 1;
+    min-width: 140px;
+  }
+  .stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+  }
+  .stat-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 32px; line-height: 1;
+    margin-top: 6px;
+  }
+
+  .leaderboard {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .lb-row {
+    display: grid;
+    grid-template-columns: 64px 1fr auto auto;
+    gap: 16px; align-items: center;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--line);
+    transition: background 0.15s;
+  }
+  .lb-row:last-child { border-bottom: none; }
+  .lb-row:hover { background: var(--panel-2); }
+  .lb-row.head {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    background: var(--panel-2);
+  }
+  .lb-row.head:hover { background: var(--panel-2); }
+  .rank {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px; color: var(--muted);
+    text-align: center;
+  }
+  .rank.gold   { color: var(--gold); }
+  .rank.silver { color: var(--silver); }
+  .rank.bronze { color: var(--bronze); }
+  .player-name { font-weight: 700; font-size: 17px; }
+  .lb-row.head .player-name { font-weight: 600; font-size: 11px; }
+  .points {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px; color: var(--accent);
+    line-height: 1; min-width: 56px; text-align: right;
+  }
+  .lb-row.head .points {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--muted);
+  }
+  .correct-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; color: var(--muted);
+    min-width: 70px; text-align: right;
+  }
+
+  .matches-wrap {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: auto;
+    max-height: 75vh;
+  }
+  .matches-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .matches-table th, .matches-table td {
+    padding: 8px 10px;
+    text-align: center;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .matches-table th:last-child, .matches-table td:last-child { border-right: none; }
+  .matches-table tr:last-child td { border-bottom: none; }
+  .matches-table thead th {
+    background: var(--panel-2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted); font-weight: 600;
+    position: sticky; top: 0;
+    z-index: 2;
+  }
+  .matches-table .col-match {
+    text-align: left;
+    font-weight: 600;
+    background: var(--panel-2);
+    position: sticky; left: 0;
+    z-index: 1;
+    width: 240px;
+    min-width: 240px;
+    max-width: 240px;
+    border-right: 2px solid var(--line);
+  }
+  .matches-table .col-match small {
+    display: block;
+    font-weight: 400;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .matches-table thead .col-match { z-index: 3; }
+  .matches-table .col-winner {
+    font-weight: 700;
+    color: var(--accent);
+    position: sticky;
+    left: 240px;
+    z-index: 1;
+    min-width: 90px;
+    /* Solid background — equivalent to rgba(255,107,26,0.08) over var(--panel),
+       but opaque so cells scrolling underneath don't bleed through */
+    background: #211814;
+    border-right: 2px solid var(--line);
+  }
+  .matches-table thead .col-winner {
+    background: var(--panel-2);
+    z-index: 3;
+  }
+  .pick.good { background: rgba(87,199,119,0.18); color: #aae8ba; font-weight: 600; }
+  .pick.bad  { background: rgba(196,100,46,0.18); color: #e8b896; }
+  .pick.aban { color: var(--gold); font-style: italic; }
+  .pick.future, .col-winner.future { color: var(--muted); }
+
+  .bracket-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .bracket-table th, .bracket-table td {
+    padding: 12px 14px;
+    text-align: center;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .bracket-table th:last-child, .bracket-table td:last-child { border-right: none; }
+  .bracket-table tr:last-child td { border-bottom: none; }
+  .bracket-table thead th {
+    background: var(--panel-2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .bracket-table .col-position {
+    text-align: left;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    color: var(--accent);
+    background: var(--panel-2);
+  }
+
+  .banner {
+    background: rgba(245, 197, 66, 0.08);
+    border: 1px solid rgba(245, 197, 66, 0.3);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--warn);
+    display: none;
+  }
+  .banner.show { display: block; }
+
+  footer {
+    padding: 32px;
+    text-align: center;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    border-top: 1px solid var(--line);
+    margin-top: 64px;
+  }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+
+  .state {
+    text-align: center;
+    padding: 80px 32px;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .state h2 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 36px;
+    color: var(--text);
+    margin-bottom: 12px;
+  }
+
+  @media (max-width: 640px) {
+    header { padding: 32px 20px 20px; }
+    main { padding: 20px; }
+    .tabs { padding: 0 20px; }
+    .tab { padding: 12px 14px; font-size: 13px; }
+    .lb-row { grid-template-columns: 44px 1fr auto auto; padding: 12px 16px; gap: 12px; }
+    .rank { font-size: 22px; }
+    .player-name { font-size: 15px; }
+    .points { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-row">
+    <div>
+      <div class="brand">ipl<span class="dot">·</span>madness</div>
+      <div class="tagline"><span class="live" id="status-dot"></span> <span id="status">loading…</span></div>
+    </div>
+    <button class="refresh-btn" id="refresh-btn" title="Bypass cache and refetch">
+      <span class="spinner"></span>
+      <span>refresh</span>
+    </button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-panel="leaderboard">Leaderboard</button>
+  <button class="tab"        data-panel="matches">Match Grid</button>
+  <button class="tab"        data-panel="bracket">Bracket Picks</button>
+</nav>
+
+<main>
+  <div id="leaderboard" class="panel active">
+    <div class="banner" id="validation-banner"></div>
+    <div class="stats-bar" id="stats-bar"></div>
+    <div class="leaderboard" id="leaderboard-list"></div>
+  </div>
+
+  <div id="matches" class="panel">
+    <div class="matches-wrap">
+      <table class="matches-table" id="matches-table"></table>
+    </div>
+  </div>
+
+  <div id="bracket" class="panel">
+    <p style="color: var(--muted); font-size: 13px; margin-bottom: 16px; font-family: 'JetBrains Mono', monospace;">
+      end-of-season bracket predictions · not scored yet
+    </p>
+    <div style="overflow-x: auto;">
+      <table class="bracket-table" id="bracket-table"></table>
+    </div>
+  </div>
+</main>
+
+<footer>
+  built for friends · static · zero backend ·
+  data from <a id="source-link" href="#" target="_blank" rel="noopener">google sheets</a> ·
+  <span id="generated-at"></span>
+</footer>
+
+<script>
+  // ─── CONFIG ─────────────────────────────────────────────
+  const SHEET_ID = "1VgNuBgScnWmENeMt2PK1qoZZ_57hPdvA";
+  const GID = "2127335045";
+  const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}`;
+  const SHEET_VIEW_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit?gid=${GID}`;
+  document.getElementById('source-link').href = SHEET_VIEW_URL;
+
+  // ─── CSV PARSING ────────────────────────────────────────
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], cell = '', inQ = false, i = 0;
+    while (i < text.length) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"' && text[i+1] === '"') { cell += '"'; i += 2; continue; }
+        if (c === '"') { inQ = false; i++; continue; }
+        cell += c; i++;
+      } else {
+        if (c === '"') { inQ = true; i++; continue; }
+        if (c === ',') { row.push(cell); cell = ''; i++; continue; }
+        if (c === '\r') { i++; continue; }
+        if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; i++; continue; }
+        cell += c; i++;
+      }
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+
+  // ─── SCORING ────────────────────────────────────────────
+  // Normalize ONLY case + whitespace. Don't auto-correct typos —
+  // the source sheet treats typos as wrong, and we match that.
+  const norm = s => (s || '').trim().toUpperCase();
+
+  const TEAM_SHORT = {
+    'ROYAL CHALLENGERS BENGALURU': 'RCB',
+    'MUMBAI INDIANS': 'MI',
+    'CHENNAI SUPER KINGS': 'CSK',
+    'KOLKATA KNIGHT RIDERS': 'KKR',
+    'SUNRISERS HYDERABAD': 'SRH',
+    'PUNJAB KINGS': 'PBKS',
+    'RAJASTHAN ROYALS': 'RR',
+    'GUJARAT TITANS': 'GT',
+    'GUJARAT LITANS': 'GT',  // typo in source
+    'LUCKNOW SUPER GIANTS': 'LSG',
+    'DELHI CAPITALS': 'DC',
+  };
+  // Known team short codes (used to canonicalize whatever the user typed).
+  const TEAM_CODES = ['RCB','MI','CSK','KKR','SRH','PBKS','RR','GT','LSG','DC'];
+
+  // Canonicalize a pick or winner to a known team code, with fuzzy matching:
+  //   - case-insensitive, trims whitespace
+  //   - full team name → short code  (e.g. "Mumbai Indians" → "MI")
+  //   - PBK* prefix → PBKS  (so PBK, PBKA, PBKs all count as Punjab Kings)
+  //   - PK → PBKS  (explicit alias)
+  //   - RC → RCB  (explicit alias)
+  //   - exact short-code match → itself
+  // Returns the canonical code, or '' if unrecognized.
+  const ALIASES = { 'PK': 'PBKS', 'RC': 'RCB' };
+  function canonicalize(s) {
+    const u = norm(s);
+    if (!u) return '';
+    if (TEAM_SHORT[u]) return TEAM_SHORT[u];     // full name → code
+    if (TEAM_CODES.includes(u)) return u;        // already a code
+    if (ALIASES[u]) return ALIASES[u];           // explicit alias
+    if (u.startsWith('PBK')) return 'PBKS';      // PBK* → PBKS
+    return '';                                    // unrecognized — counts as wrong
+  }
+
+  // For display in the grid: prefer the canonical code, fall back to the raw text.
+  const teamCode = name => canonicalize(name) || (name || '').trim();
+
+  function scorePick(winner, pick) {
+    const w = canonicalize(winner) || norm(winner);  // winner may be TBD/N/A, not a team
+    const p = canonicalize(pick);
+    if (!w || w === 'TBD') return { state: 'future', points: null };
+    if (w === 'N/A')       return { state: p ? 'aban-picked' : 'aban-blank', points: p ? 1 : 0 };
+    if (p && p === w)      return { state: 'good', points: 2 };
+    return { state: 'bad', points: 0 };
+  }
+
+  // ─── PARSE THE SHEET ────────────────────────────────────
+  function processCSV(rows) {
+    const headerRow = rows[2] || [];
+    const totalsRow = rows[0] || [];
+    const players = [];
+    const playerCols = [];
+    for (let c = 6; c < headerRow.length; c += 2) {
+      const name = (headerRow[c] || '').trim();
+      if (!name || norm(name) === 'POINTS') break;
+      players.push(name);
+      playerCols.push(c);
+    }
+    const maintainerTotals = {};
+    players.forEach((p, i) => {
+      const v = totalsRow[playerCols[i]];
+      maintainerTotals[p] = v ? parseInt(v, 10) || 0 : 0;
+    });
+
+    const leagueMatches = [];
+    const bracketRows   = [];
+
+    for (let r = 3; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row.length < 6) continue;
+      const date  = (row[0] || '').trim();
+      const time  = (row[1] || '').trim();
+      const venue = (row[2] || '').trim();
+      const t1raw = (row[3] || '').trim();
+      const t2raw = (row[4] || '').trim();
+      const winnerRaw = (row[5] || '').trim();
+
+      const picks = {};
+      players.forEach((p, i) => {
+        const col = playerCols[i];
+        picks[p] = (row[col] || '').trim();
+      });
+
+      if (t1raw && t2raw) {
+        leagueMatches.push({
+          date, time, venue,
+          team1: t1raw, team2: t2raw,
+          team1Code: teamCode(t1raw), team2Code: teamCode(t2raw),
+          winnerRaw, winnerCode: teamCode(winnerRaw),
+          picks,
+        });
+      } else if (date) {
+        bracketRows.push({ label: date, picks });
+      }
+    }
+
+    const totals = {}, correct = {}, abandoned = {}, wrong = {}, missed = {};
+    players.forEach(p => {
+      totals[p] = 0; correct[p] = 0; abandoned[p] = 0; wrong[p] = 0; missed[p] = 0;
+    });
+    let played = 0, abandonedCount = 0, future = 0;
+    leagueMatches.forEach(m => {
+      const w = norm(m.winnerRaw);
+      if (!w || w === 'TBD') { future++; return; }
+      if (w === 'N/A')        { abandonedCount++; }
+      else                    { played++; }
+      players.forEach(p => {
+        const r = scorePick(m.winnerRaw, m.picks[p]);
+        if (r.state === 'good')             { totals[p] += 2; correct[p]++; }
+        else if (r.state === 'aban-picked') { totals[p] += 1; abandoned[p]++; }
+        else if (r.state === 'bad')         { wrong[p]++; }
+        else if (m.picks[p] === '')         { missed[p]++; }
+      });
+    });
+
+    // Compare to maintainer's totals. Fuzzy matching means we may award points
+    // the source sheet doesn't (e.g. PBK*), so mine >= theirs is expected.
+    // Only flag mine < theirs — that would indicate a real scoring bug.
+    const discrepancies = [];
+    let bonusPoints = 0;
+    players.forEach(p => {
+      if (totals[p] < maintainerTotals[p]) {
+        discrepancies.push({ player: p, mine: totals[p], theirs: maintainerTotals[p] });
+      } else if (totals[p] > maintainerTotals[p]) {
+        bonusPoints += totals[p] - maintainerTotals[p];
+      }
+    });
+
+    const leaderboard = players
+      .map(p => ({ player: p, total: totals[p], correct: correct[p], abandoned: abandoned[p], wrong: wrong[p], missed: missed[p] }))
+      .sort((a, b) => b.total - a.total || b.correct - a.correct || a.player.localeCompare(b.player));
+
+    return {
+      players, leaderboard,
+      leagueMatches, bracketRows,
+      played, abandoned: abandonedCount, future,
+      totalMatches: leagueMatches.length,
+      discrepancies,
+      bonusPoints,
+    };
+  }
+
+  // ─── RENDERING ──────────────────────────────────────────
+  function renderStats(d) {
+    document.getElementById('stats-bar').innerHTML = `
+      <div class="stat">
+        <div class="stat-label">Season</div>
+        <div class="stat-value">IPL 2026</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Matches Scored</div>
+        <div class="stat-value">${d.played + d.abandoned} / ${d.totalMatches}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Players</div>
+        <div class="stat-value">${d.players.length}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Leader</div>
+        <div class="stat-value">${d.leaderboard[0]?.player ?? '—'}</div>
+      </div>
+    `;
+  }
+
+  function renderLeaderboard(d) {
+    const cls = i => i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+    const denom = d.played + d.abandoned;
+    document.getElementById('leaderboard-list').innerHTML = `
+      <div class="lb-row head">
+        <div class="rank">#</div>
+        <div class="player-name">Player</div>
+        <div class="points">Points</div>
+        <div class="correct-count">Correct</div>
+      </div>
+      ${d.leaderboard.map((row, i) => `
+        <div class="lb-row">
+          <div class="rank ${cls(i)}">${i + 1}</div>
+          <div class="player-name">${row.player}</div>
+          <div class="points">${row.total}</div>
+          <div class="correct-count">${row.correct} / ${denom}</div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  function renderMatches(d) {
+    const tbl = document.getElementById('matches-table');
+    const head = `
+      <thead>
+        <tr>
+          <th class="col-match">Match</th>
+          <th class="col-winner">Winner</th>
+          ${d.players.map(p => `<th>${p}</th>`).join('')}
+        </tr>
+      </thead>
+    `;
+    const body = `
+      <tbody>
+        ${d.leagueMatches.map((m, idx) => {
+          const w = norm(m.winnerRaw);
+          const isFuture = !w || w === 'TBD';
+          const isAban   = w === 'N/A';
+          const winnerCell = isFuture
+            ? `<td class="col-winner future">—</td>`
+            : isAban
+              ? `<td class="col-winner aban">abandoned</td>`
+              : `<td class="col-winner">${m.winnerCode}</td>`;
+          const cells = d.players.map(p => {
+            const pickRaw = m.picks[p];
+            const display = teamCode(pickRaw) || (pickRaw || '—');
+            const r = scorePick(m.winnerRaw, pickRaw);
+            const cls = r.state === 'good' ? 'good'
+                      : r.state === 'bad'  ? 'bad'
+                      : r.state.startsWith('aban') ? 'aban'
+                      : 'future';
+            return `<td class="pick ${cls}">${display}</td>`;
+          }).join('');
+          const dateLabel = m.date || '';
+          return `<tr>
+            <td class="col-match">
+              M${idx + 1}: ${m.team1Code} v ${m.team2Code}
+              ${dateLabel ? `<small>${dateLabel}${m.venue ? ' · ' + m.venue : ''}</small>` : ''}
+            </td>
+            ${winnerCell}
+            ${cells}
+          </tr>`;
+        }).join('')}
+      </tbody>
+    `;
+    tbl.innerHTML = head + body;
+  }
+
+  function renderBracket(d) {
+    const tbl = document.getElementById('bracket-table');
+    if (!d.bracketRows.length) {
+      tbl.innerHTML = `<tr><td style="padding: 32px; color: var(--muted);">No bracket predictions yet.</td></tr>`;
+      return;
+    }
+    tbl.innerHTML = `
+      <thead>
+        <tr>
+          <th class="col-position">Position</th>
+          ${d.players.map(p => `<th>${p}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>
+        ${d.bracketRows.map(r => `
+          <tr>
+            <td class="col-position">${r.label}</td>
+            ${d.players.map(p => `<td>${teamCode(r.picks[p]) || '—'}</td>`).join('')}
+          </tr>
+        `).join('')}
+      </tbody>
+    `;
+  }
+
+  function renderValidation(d) {
+    const banner = document.getElementById('validation-banner');
+    if (!d.discrepancies.length) { banner.classList.remove('show'); return; }
+    const list = d.discrepancies
+      .map(x => `${x.player} (computed ${x.mine}, sheet says ${x.theirs})`)
+      .join(', ');
+    banner.textContent = `⚠ scoring discrepancy: ${list}. let claude know.`;
+    banner.classList.add('show');
+  }
+
+  function setStatus(text, state) {
+    document.getElementById('status').textContent = text;
+    const dot = document.getElementById('status-dot');
+    dot.classList.remove('error', 'warn');
+    if (state === 'error') dot.classList.add('error');
+    if (state === 'warn')  dot.classList.add('warn');
+  }
+
+  // ─── BOOT & REFRESH ─────────────────────────────────────
+  async function load(bypassCache = false) {
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('loading');
+    btn.disabled = true;
+    setStatus('fetching latest…', 'warn');
+
+    try {
+      const url = bypassCache ? `${CSV_URL}&_=${Date.now()}` : CSV_URL;
+      const res = await fetch(url, { cache: bypassCache ? 'no-store' : 'default' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      const rows = parseCSV(text);
+      const d = processCSV(rows);
+
+      renderValidation(d);
+      renderStats(d);
+      renderLeaderboard(d);
+      renderMatches(d);
+      renderBracket(d);
+
+      const fetchedAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      const summary = `IPL 2026 · ${d.played + d.abandoned} of ${d.totalMatches} matches scored`;
+      setStatus(summary, d.discrepancies.length ? 'warn' : 'live');
+      document.getElementById('generated-at').textContent = `last fetched ${fetchedAt}`;
+    } catch (err) {
+      console.error(err);
+      setStatus(`couldn't fetch: ${err.message}`, 'error');
+      document.querySelector('main').innerHTML = `
+        <div class="state">
+          <h2>can't reach the sheet</h2>
+          <p>${err.message}</p>
+          <p style="margin-top: 16px;">if the source sheet's sharing changed, the export URL may need updating.</p>
+        </div>
+      `;
+    } finally {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  }
+
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(btn.dataset.panel).classList.add('active');
+    });
+  });
+
+  document.getElementById('refresh-btn').addEventListener('click', () => load(true));
+
+  load(false);
+</script>
+</body>
+</html>
