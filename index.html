@@ -232,6 +232,8 @@
     padding: 14px 20px;
     flex: 1;
     min-width: 140px;
+    position: relative;
+    overflow: hidden;
   }
   .stat-label {
     font-family: 'JetBrains Mono', monospace;
@@ -243,6 +245,34 @@
     font-size: 32px; line-height: 1;
     margin-top: 6px;
   }
+  /* Subline shown below the main value (e.g. "with 45 pts" under leader name) */
+  .stat-subline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    margin-top: 4px;
+    letter-spacing: 0.05em;
+  }
+  /* Progress bar that fills the bottom of a stat card */
+  .stat-progress {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 3px;
+    background: var(--line);
+  }
+  .stat-progress::after {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: var(--pct, 0%);
+    background: linear-gradient(90deg, var(--accent), #ffa566);
+    transition: width 1.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  /* Wraps long leader names (multiple tied) onto multiple lines gracefully */
+  .stat-value.compact {
+    font-size: 22px;
+    line-height: 1.15;
+  }
 
   .leaderboard {
     background: var(--panel);
@@ -252,8 +282,8 @@
   }
   .lb-row {
     display: grid;
-    grid-template-columns: 64px 1fr auto auto;
-    gap: 16px; align-items: center;
+    grid-template-columns: 64px 1fr auto auto auto;
+    gap: 20px; align-items: center;
     padding: 16px 24px;
     border-bottom: 1px solid var(--line);
     transition: background 0.2s, transform 0.2s;
@@ -362,6 +392,31 @@
     text-shadow: 0 0 10px rgba(87, 199, 119, 0.5);
     font-size: 26px;
   }
+
+  /* Recent form: small dots showing last 5 played matches, oldest-to-newest */
+  .form-col {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    min-width: 80px;
+    justify-content: flex-end;
+  }
+  .lb-row.head .form-col {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    justify-content: flex-end;
+  }
+  .form-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--line);
+    flex-shrink: 0;
+  }
+  .form-dot.good { background: var(--good); box-shadow: 0 0 4px rgba(87,199,119,0.5); }
+  .form-dot.bad  { background: var(--bad);  opacity: 0.6; }
+  .form-dot.aban { background: var(--gold); }
 
   .matches-wrap {
     background: var(--panel);
@@ -581,10 +636,27 @@
     main { padding: 20px; }
     .tabs { padding: 0 20px; }
     .tab { padding: 12px 14px; font-size: 13px; }
-    .lb-row { grid-template-columns: 44px 1fr auto auto; padding: 12px 16px; gap: 12px; }
+
+    /* Stats cards: tighter padding, smaller value font so "IPL 2026" fits on one line */
+    .stat { padding: 12px 14px; min-width: 130px; }
+    .stat-value { font-size: 24px; }
+    .stat-value.compact { font-size: 18px; }
+    .stat-subline { font-size: 10px; }
+
+    /* Leaderboard rows: more breathing room for the streak column on mobile.
+       Hide the form dots — there's not enough room and the streak number
+       already conveys the "are they hot" signal. */
+    .lb-row {
+      grid-template-columns: 40px 1fr auto auto;
+      padding: 12px 14px;
+      gap: 10px;
+    }
+    .form-col { display: none; }
     .rank { font-size: 22px; width: 36px; height: 36px; line-height: 36px; }
     .player-name { font-size: 15px; }
-    .points { font-size: 24px; }
+    .points { font-size: 24px; min-width: 44px; }
+    .streak-col { font-size: 18px; min-width: 60px; }
+    .streak-col.max-streak { font-size: 22px; }
   }
 </style>
 </head>
@@ -835,24 +907,44 @@
       }
     });
 
-    // Streak: walk played matches in reverse. Count consecutive correct picks
-    // from the most recent match backward. Stop at the first non-correct result.
-    // Abandoned matches don't break or extend a streak — skip them.
+    // Streak + recent form: walk played matches in reverse from the most recent.
+    // Streak counts consecutive correct picks back from the latest played match.
+    // Form is a list of up to 5 most-recent results per player, oldest-to-newest:
+    //   'good' = correct, 'bad' = wrong, 'aban' = abandoned, '' = not yet played.
+    // Abandoned matches don't break or extend the streak, but DO appear in form.
+    const FORM_LENGTH = 5;
     const streaks = {};
-    players.forEach(p => {
-      let streak = 0;
-      // Walk backwards through league matches, only considering played ones
-      for (let i = leagueMatches.length - 1; i >= 0; i--) {
-        const m = leagueMatches[i];
-        const w = norm(m.winnerRaw);
-        if (!w || w === 'TBD') continue;    // future — skip
-        if (w === 'N/A') continue;          // abandoned — skip, doesn't break streak
+    const recentForm = {};
+    players.forEach(p => { streaks[p] = 0; recentForm[p] = []; });
+
+    let streakLocked = {};
+    players.forEach(p => streakLocked[p] = false);
+
+    for (let i = leagueMatches.length - 1; i >= 0; i--) {
+      const m = leagueMatches[i];
+      const w = norm(m.winnerRaw);
+      if (!w || w === 'TBD') continue;             // future — skip
+      const isAban = w === 'N/A';
+      players.forEach(p => {
         const r = scorePick(m.winnerRaw, m.picks[p]);
-        if (r.state === 'good') { streak++; }
-        else { break; }                    // wrong pick — streak ends
-      }
-      streaks[p] = streak;
-    });
+        // Form (collect first FORM_LENGTH played matches walking backward)
+        if (recentForm[p].length < FORM_LENGTH) {
+          if (isAban) recentForm[p].unshift('aban');
+          else if (r.state === 'good') recentForm[p].unshift('good');
+          else recentForm[p].unshift('bad');
+        }
+        // Streak (only count non-abandoned, until first miss)
+        if (!streakLocked[p] && !isAban) {
+          if (r.state === 'good') streaks[p]++;
+          else streakLocked[p] = true;
+        }
+      });
+      // Stop walking once everyone has full form AND locked streaks
+      const allDone = players.every(p =>
+        recentForm[p].length >= FORM_LENGTH && streakLocked[p]
+      );
+      if (allDone) break;
+    }
 
     const leaderboard = players
       .map(p => ({
@@ -861,6 +953,7 @@
         correct: correct[p],          // used as a sort tiebreaker only
         bracket: bracketTotals[p],
         streak: streaks[p],
+        form: recentForm[p],
       }))
       .sort((a, b) => b.total - a.total || b.correct - a.correct || a.player.localeCompare(b.player));
 
@@ -918,6 +1011,10 @@
     const leaders = top !== undefined ? d.leaderboard.filter(r => r.total === top) : [];
     const leaderLabel = leaders.length > 1 ? 'Leaders' : 'Leader';
     const leaderNames = leaders.map(r => r.player).join(', ') || '—';
+    const compactClass = leaders.length > 1 ? ' compact' : '';
+
+    const scored = d.played + d.abandoned;
+    const pct = d.totalMatches > 0 ? Math.round((scored / d.totalMatches) * 100) : 0;
 
     document.getElementById('stats-bar').innerHTML = `
       <div class="stat">
@@ -927,6 +1024,8 @@
       <div class="stat">
         <div class="stat-label">Matches Scored</div>
         <div class="stat-value" id="stat-matches">0 / ${d.totalMatches}</div>
+        <div class="stat-subline" id="stat-pct">0% complete</div>
+        <div class="stat-progress" id="stat-progress"></div>
       </div>
       <div class="stat">
         <div class="stat-label">Players</div>
@@ -934,13 +1033,23 @@
       </div>
       <div class="stat">
         <div class="stat-label">${leaderLabel}</div>
-        <div class="stat-value">${leaderNames}</div>
+        <div class="stat-value${compactClass}">${leaderNames}</div>
+        ${top !== undefined ? `<div class="stat-subline">${top} pts</div>` : ''}
       </div>
     `;
-    // Trigger count-ups after the cards have animated in (CSS delays go up to ~0.85s)
+
+    // Trigger count-ups + progress bar fill after the cards have animated in
     setTimeout(() => {
-      countUpFraction(document.getElementById('stat-matches'), d.played + d.abandoned, d.totalMatches);
+      countUpFraction(document.getElementById('stat-matches'), scored, d.totalMatches);
       countUp(document.getElementById('stat-players'), d.players.length);
+      countUp(document.getElementById('stat-pct'), pct, 1000);
+      // Append "% complete" once count finishes (or immediately if reduced motion)
+      const pctEl = document.getElementById('stat-pct');
+      const finalize = () => { pctEl.textContent = `${pct}% complete`; };
+      if (reducedMotion) finalize();
+      else setTimeout(finalize, 1050);
+      // Animate the progress bar
+      document.getElementById('stat-progress').style.setProperty('--pct', `${pct}%`);
     }, reducedMotion ? 0 : 400);
   }
 
@@ -967,6 +1076,7 @@
         <div class="player-name">Player</div>
         <div class="points">Points</div>
         <div class="streak-col">Streak</div>
+        <div class="form-col">Form</div>
       </div>
       ${d.leaderboard.map((row, i) => {
         const delay = (total - 1 - i) * 0.04;
@@ -976,12 +1086,20 @@
         const streakCls = isHot ? 'hot' : 'cold';
         const maxCls = isMaxStreak ? ' max-streak' : '';
         const fireIcon = isHot ? '🔥 ' : '';
+        // Render form: pad with empty dots if fewer than 5 played matches
+        const dots = [...row.form];
+        while (dots.length < 5) dots.unshift('');  // pad on left so right-aligned
+        const formHtml = dots.map(state => {
+          const cls = state ? `form-dot ${state}` : 'form-dot';
+          return `<span class="${cls}"></span>`;
+        }).join('');
         return `
           <div class="lb-row${leaderClass}" style="animation-delay: ${delay}s;">
             <div class="rank ${cls(ranks[i])}">${ranks[i]}</div>
             <div class="player-name">${row.player}</div>
             <div class="points" data-final="${row.total}">0</div>
             <div class="streak-col ${streakCls}${maxCls}">${fireIcon}${row.streak}</div>
+            <div class="form-col" title="Last 5 matches: oldest → newest">${formHtml}</div>
           </div>
         `;
       }).join('')}
