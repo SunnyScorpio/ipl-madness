@@ -384,6 +384,16 @@
     position: sticky; top: 0;
     z-index: 2;
   }
+  .matches-table thead th .th-score {
+    display: block;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 16px;
+    color: var(--accent);
+    letter-spacing: 0;
+    text-transform: none;
+    margin-top: 2px;
+    line-height: 1;
+  }
   .matches-table .col-match {
     text-align: left;
     font-weight: 600;
@@ -987,12 +997,15 @@
 
   function renderMatches(d) {
     const tbl = document.getElementById('matches-table');
+    // Build a quick lookup for player totals
+    const playerTotals = {};
+    d.leaderboard.forEach(r => { playerTotals[r.player] = r.total; });
     const head = `
       <thead>
         <tr>
           <th class="col-match">Match</th>
           <th class="col-winner">Winner</th>
-          ${d.players.map(p => `<th>${p}</th>`).join('')}
+          ${d.players.map(p => `<th>${p}<span class="th-score">${playerTotals[p] ?? 0}</span></th>`).join('')}
         </tr>
       </thead>
     `;
