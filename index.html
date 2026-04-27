@@ -849,8 +849,16 @@
         <div class="stat-value" id="stat-players">0</div>
       </div>
       <div class="stat">
-        <div class="stat-label">Leader</div>
-        <div class="stat-value">${d.leaderboard[0]?.player ?? '—'}</div>
+        <div class="stat-label">${(() => {
+          const top = d.leaderboard[0]?.total;
+          const leaders = d.leaderboard.filter(r => r.total === top);
+          return leaders.length > 1 ? 'Leaders' : 'Leader';
+        })()}</div>
+        <div class="stat-value">${(() => {
+          const top = d.leaderboard[0]?.total;
+          const leaders = d.leaderboard.filter(r => r.total === top);
+          return leaders.map(r => r.player).join(', ') || '—';
+        })()}</div>
       </div>
     `;
     // Trigger count-ups after the cards have animated in (CSS delays go up to ~0.85s)
@@ -861,9 +869,23 @@
   }
 
   function renderLeaderboard(d) {
-    const cls = i => i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
     const denom = d.played + d.abandoned;
     const total = d.leaderboard.length;
+
+    // Dense ranking: tied totals share the same rank, next rank increments by 1.
+    // e.g. 45, 41, 41, 39 → ranks 1, 2, 2, 3
+    const ranks = [];
+    d.leaderboard.forEach((row, i) => {
+      if (i === 0 || row.total < d.leaderboard[i - 1].total) {
+        ranks.push(i === 0 ? 1 : ranks[i - 1] + 1);
+      } else {
+        ranks.push(ranks[i - 1]);
+      }
+    });
+
+    // Medal class based on rank, not position — so tied #1s both get gold.
+    const cls = rank => rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : '';
+
     document.getElementById('leaderboard-list').innerHTML = `
       <div class="lb-row head">
         <div class="rank">#</div>
@@ -872,13 +894,11 @@
         <div class="correct-count">Correct</div>
       </div>
       ${d.leaderboard.map((row, i) => {
-        // Reverse-cascade: bottom row appears first, leader lands last.
-        // Ranks 0..N-1 → delays go from (N-1)*40ms down to 0.
         const delay = (total - 1 - i) * 0.04;
-        const leaderClass = i === 0 ? ' leader' : '';
+        const leaderClass = ranks[i] === 1 ? ' leader' : '';
         return `
           <div class="lb-row${leaderClass}" style="animation-delay: ${delay}s;">
-            <div class="rank ${cls(i)}">${i + 1}</div>
+            <div class="rank ${cls(ranks[i])}">${ranks[i]}</div>
             <div class="player-name">${row.player}</div>
             <div class="points" data-final="${row.total}">0</div>
             <div class="correct-count">${row.correct} / ${denom}</div>
