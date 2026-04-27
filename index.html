@@ -1059,12 +1059,72 @@
     }
   }
 
+  // ─── MATCH GRID AUTO-SCROLL ─────────────────────────────
+  // Smooth-scrolls the match table so the first future row (winner == "—")
+  // lands at the vertical midpoint of the container, giving equal context
+  // above (played matches) and below (upcoming). When all matches are done,
+  // scrolls to the very bottom.
+  function scrollToLatestMatch() {
+    const wrap = document.querySelector('.matches-wrap');
+    if (!wrap) return;
+
+    // Find the first row whose winner cell contains exactly "—"
+    const rows = wrap.querySelectorAll('tbody tr');
+    let targetRow = null;
+    for (const row of rows) {
+      const winnerCell = row.querySelector('.col-winner');
+      if (winnerCell && winnerCell.textContent.trim() === '—') {
+        targetRow = row;
+        break;
+      }
+    }
+
+    // Desired scrollTop: place targetRow at the vertical midpoint of wrap.
+    // If no future row exists (season complete), scroll to the bottom.
+    const wrapHeight = wrap.clientHeight;
+    let desiredScrollTop;
+    if (targetRow) {
+      // offsetTop is relative to the table; account for the sticky thead height
+      const thead = wrap.querySelector('thead');
+      const theadHeight = thead ? thead.offsetHeight : 0;
+      const rowMidpoint = targetRow.offsetTop + targetRow.offsetHeight / 2;
+      desiredScrollTop = rowMidpoint - wrapHeight / 2;
+    } else {
+      desiredScrollTop = wrap.scrollHeight - wrapHeight;
+    }
+    desiredScrollTop = Math.max(0, desiredScrollTop);
+
+    // Animate with RAF using ease-in-out-cubic so it feels deliberate, not abrupt.
+    if (reducedMotion) { wrap.scrollTop = desiredScrollTop; return; }
+    const startTop  = wrap.scrollTop;
+    const delta     = desiredScrollTop - startTop;
+    if (Math.abs(delta) < 2) return;   // already there
+    const duration  = Math.min(900, Math.max(400, Math.abs(delta) * 0.6));
+    const startTime = performance.now();
+
+    function easeInOutCubic(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function tick(now) {
+      const t = Math.min(1, (now - startTime) / duration);
+      wrap.scrollTop = startTop + delta * easeInOutCubic(t);
+      if (t < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
   document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById(btn.dataset.panel).classList.add('active');
+      // Trigger match-grid scroll whenever that tab is opened
+      if (btn.dataset.panel === 'matches') {
+        // Small delay so the panel is visible before we measure offsetTop
+        setTimeout(scrollToLatestMatch, 50);
+      }
     });
   });
 
