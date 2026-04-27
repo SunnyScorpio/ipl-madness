@@ -294,10 +294,26 @@
     font-family: 'Bebas Neue', sans-serif;
     font-size: 28px; color: var(--muted);
     text-align: center;
+    width: 44px; height: 44px;
+    line-height: 44px;
+    border-radius: 50%;
+    margin: 0 auto;
   }
-  .rank.gold   { color: var(--gold); }
-  .rank.silver { color: var(--silver); }
-  .rank.bronze { color: var(--bronze); }
+  .rank.gold {
+    color: #1a1400;
+    background: linear-gradient(135deg, #f5c542, #e0a820);
+    box-shadow: 0 0 12px rgba(245, 197, 66, 0.35);
+  }
+  .rank.silver {
+    color: #1a1a1e;
+    background: linear-gradient(135deg, #c8cdd6, #8f96a3);
+    box-shadow: 0 0 10px rgba(184, 188, 198, 0.25);
+  }
+  .rank.bronze {
+    color: #1a1208;
+    background: linear-gradient(135deg, #c98a5a, #a06a3a);
+    box-shadow: 0 0 10px rgba(201, 138, 90, 0.25);
+  }
   .player-name { font-weight: 700; font-size: 17px; }
   .lb-row.head .player-name { font-weight: 600; font-size: 11px; }
   .points {
@@ -309,10 +325,28 @@
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px; color: var(--muted);
   }
-  .correct-count {
+  .streak-col {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    min-width: 70px;
+    text-align: right;
+  }
+  .lb-row.head .streak-col {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 13px; color: var(--muted);
-    min-width: 70px; text-align: right;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .streak-col.hot {
+    color: var(--good);
+  }
+  .streak-col.cold {
+    color: var(--bad);
+    opacity: 0.7;
+  }
+  .streak-col.max-streak {
+    color: var(--good);
+    text-shadow: 0 0 10px rgba(87, 199, 119, 0.5);
+    font-size: 26px;
   }
 
   .matches-wrap {
@@ -524,7 +558,7 @@
     .tabs { padding: 0 20px; }
     .tab { padding: 12px 14px; font-size: 13px; }
     .lb-row { grid-template-columns: 44px 1fr auto auto; padding: 12px 16px; gap: 12px; }
-    .rank { font-size: 22px; }
+    .rank { font-size: 22px; width: 36px; height: 36px; line-height: 36px; }
     .player-name { font-size: 15px; }
     .points { font-size: 24px; }
   }
@@ -781,13 +815,35 @@
       }
     });
 
+    // Streak: walk played matches in reverse. Count consecutive correct picks
+    // from the most recent match backward. Stop at the first non-correct result.
+    // Abandoned matches don't break or extend a streak — skip them.
+    const streaks = {};
+    players.forEach(p => {
+      let streak = 0;
+      // Walk backwards through league matches, only considering played ones
+      for (let i = leagueMatches.length - 1; i >= 0; i--) {
+        const m = leagueMatches[i];
+        const w = norm(m.winnerRaw);
+        if (!w || w === 'TBD') continue;    // future — skip
+        if (w === 'N/A') continue;          // abandoned — skip, doesn't break streak
+        const r = scorePick(m.winnerRaw, m.picks[p]);
+        if (r.state === 'good') { streak++; }
+        else { break; }                    // wrong pick — streak ends
+      }
+      streaks[p] = streak;
+    });
+
     const leaderboard = players
       .map(p => ({
         player: p, total: totals[p], correct: correct[p],
         abandoned: abandoned[p], wrong: wrong[p], missed: missed[p],
         bracket: bracketTotals[p],
+        streak: streaks[p],
       }))
       .sort((a, b) => b.total - a.total || b.correct - a.correct || a.player.localeCompare(b.player));
+
+    const maxStreak = Math.max(...leaderboard.map(r => r.streak));
 
     return {
       players, leaderboard,
@@ -796,6 +852,7 @@
       totalMatches: leagueMatches.length,
       discrepancies,
       bonusPoints,
+      maxStreak,
     };
   }
 
@@ -891,17 +948,22 @@
         <div class="rank">#</div>
         <div class="player-name">Player</div>
         <div class="points">Points</div>
-        <div class="correct-count">Correct</div>
+        <div class="streak-col">Streak</div>
       </div>
       ${d.leaderboard.map((row, i) => {
         const delay = (total - 1 - i) * 0.04;
         const leaderClass = ranks[i] === 1 ? ' leader' : '';
+        const isHot = row.streak > 0;
+        const isMaxStreak = row.streak === d.maxStreak && d.maxStreak > 0;
+        const streakCls = isHot ? 'hot' : 'cold';
+        const maxCls = isMaxStreak ? ' max-streak' : '';
+        const fireIcon = isHot ? '🔥 ' : '';
         return `
           <div class="lb-row${leaderClass}" style="animation-delay: ${delay}s;">
             <div class="rank ${cls(ranks[i])}">${ranks[i]}</div>
             <div class="player-name">${row.player}</div>
             <div class="points" data-final="${row.total}">0</div>
-            <div class="correct-count">${row.correct} / ${denom}</div>
+            <div class="streak-col ${streakCls}${maxCls}">${fireIcon}${row.streak}</div>
           </div>
         `;
       }).join('')}
