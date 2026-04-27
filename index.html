@@ -2,26 +2,40 @@
 <!--
   ipl-madness — notes for future-me
 
-  Live at: https://SunnyScorpio.github.io/ipl-madness/
-  Reads from Google Sheet: 1VgNuBgScnWmENeMt2PK1qoZZ_57hPdvA, gid 2127335045
-                           (configured in the SHEET_ID / GID consts below)
+  Live at:  https://SunnyScorpio.github.io/ipl-madness/
+  Source:   Google Sheet  1VgNuBgScnWmENeMt2PK1qoZZ_57hPdvA, gid 2127335045
+            (configured in the SHEET_ID / GID consts at top of <script>)
 
-  Local preview: `python -m http.server 8080` then open localhost:8080.
-                 DO NOT double-click this file — Chrome blocks the Google fetch
-                 from file:// pages (CORS).
+  Local preview: `python -m http.server 8080`, then localhost:8080.
+                 DO NOT double-click this file — Chrome blocks the Google
+                 fetch from file:// pages (CORS).
 
-  Scoring rules:  correct pick = 2, abandoned (winner == "N/A") = 1 if any
-                  pick was entered, wrong = 0, future (winner blank or "TBD")
-                  = not scored.
+  League scoring (per match):
+    correct pick           = 2 pts
+    abandoned (N/A winner) = 1 pt for anyone who entered a pick
+    wrong / no pick        = 0
+    future (TBD or blank)  = not scored
 
-  Fuzzy matching: case-insensitive everywhere. Aliases live in the ALIASES
-                  map in <script> below. Currently: PK→PBKS, RC→RCB, plus a
-                  PBK* prefix rule. Add more there if a friend keeps typoing.
+  Bracket scoring (end of season — see BRACKET_POINTS map in script):
+    Playoff Qualifier 1-4, 3rd, 4th = 5 pts each
+    2nd Place (finalist)            = 10 pts
+    Champion                        = 15 pts
+    Bracket points roll into the main leaderboard total.
 
-  Validation:     site computes its own totals and compares against the
-                  maintainer's totals row. Yellow banner appears only if our
-                  total drops BELOW theirs (a real bug). Bonuses from fuzzy
-                  matching go silently in our favor.
+  Fuzzy matching: case-insensitive everywhere. The ALIASES map (PK→PBKS,
+                  RC→RCB) and the PBK* prefix rule live in the script.
+                  Add more aliases there if a friend keeps typoing.
+
+  Streak: consecutive correct picks counting back from the most recent
+          played match. Abandoned matches don't break or extend it.
+          Hot (>0) = green, cold (0) = muted orange.
+
+  Match Grid auto-scroll: opening that tab scrolls smoothly to the
+          boundary between played and upcoming matches, centered.
+
+  Validation banner: site computes its own totals and only flags the
+          maintainer when our total drops BELOW theirs (would mean a
+          real scoring bug). Bonuses from fuzzy matching are silent.
 -->
 <html lang="en">
 <head>
@@ -701,7 +715,9 @@
   const teamCode = name => canonicalize(name) || (name || '').trim();
 
   function scorePick(winner, pick) {
-    const w = canonicalize(winner) || norm(winner);  // winner may be TBD/N/A, not a team
+    // canonicalize() returns '' for non-team strings — fall back to norm()
+    // so we can still detect TBD / N/A sentinels in the winner column.
+    const w = canonicalize(winner) || norm(winner);
     const p = canonicalize(pick);
     if (!w || w === 'TBD') return { state: 'future', points: null };
     if (w === 'N/A')       return { state: p ? 'aban-picked' : 'aban-blank', points: p ? 1 : 0 };
@@ -775,10 +791,9 @@
       }
     }
 
-    const totals = {}, correct = {}, abandoned = {}, wrong = {}, missed = {}, bracketTotals = {};
+    const totals = {}, correct = {}, bracketTotals = {};
     players.forEach(p => {
-      totals[p] = 0; correct[p] = 0; abandoned[p] = 0; wrong[p] = 0; missed[p] = 0;
-      bracketTotals[p] = 0;
+      totals[p] = 0; correct[p] = 0; bracketTotals[p] = 0;
     });
     let played = 0, abandonedCount = 0, future = 0;
     leagueMatches.forEach(m => {
@@ -789,9 +804,7 @@
       players.forEach(p => {
         const r = scorePick(m.winnerRaw, m.picks[p]);
         if (r.state === 'good')             { totals[p] += 2; correct[p]++; }
-        else if (r.state === 'aban-picked') { totals[p] += 1; abandoned[p]++; }
-        else if (r.state === 'bad')         { wrong[p]++; }
-        else if (m.picks[p] === '')         { missed[p]++; }
+        else if (r.state === 'aban-picked') { totals[p] += 1; }
       });
     });
 
@@ -812,16 +825,13 @@
       });
     });
 
-    // Compare to maintainer's totals. Fuzzy matching means we may award points
-    // the source sheet doesn't (e.g. PBK*), so mine >= theirs is expected.
-    // Only flag mine < theirs — that would indicate a real scoring bug.
+    // Compare to maintainer's totals. Fuzzy matching (PBK*, PK→PBKS, RC→RCB)
+    // means our totals can legitimately exceed theirs. Only flag mine < theirs,
+    // which would indicate a real scoring bug.
     const discrepancies = [];
-    let bonusPoints = 0;
     players.forEach(p => {
       if (totals[p] < maintainerTotals[p]) {
         discrepancies.push({ player: p, mine: totals[p], theirs: maintainerTotals[p] });
-      } else if (totals[p] > maintainerTotals[p]) {
-        bonusPoints += totals[p] - maintainerTotals[p];
       }
     });
 
@@ -846,14 +856,16 @@
 
     const leaderboard = players
       .map(p => ({
-        player: p, total: totals[p], correct: correct[p],
-        abandoned: abandoned[p], wrong: wrong[p], missed: missed[p],
+        player: p,
+        total: totals[p],
+        correct: correct[p],          // used as a sort tiebreaker only
         bracket: bracketTotals[p],
         streak: streaks[p],
       }))
       .sort((a, b) => b.total - a.total || b.correct - a.correct || a.player.localeCompare(b.player));
 
-    const maxStreak = Math.max(...leaderboard.map(r => r.streak));
+    // Defensive: empty list would make Math.max return -Infinity.
+    const maxStreak = leaderboard.length ? Math.max(...leaderboard.map(r => r.streak)) : 0;
 
     return {
       players, leaderboard,
@@ -861,7 +873,6 @@
       played, abandoned: abandonedCount, future,
       totalMatches: leagueMatches.length,
       discrepancies,
-      bonusPoints,
       maxStreak,
     };
   }
@@ -902,6 +913,12 @@
 
   // ─── RENDERING ──────────────────────────────────────────
   function renderStats(d) {
+    // Leaders: everyone tied for the top score (often just one person)
+    const top = d.leaderboard[0]?.total;
+    const leaders = top !== undefined ? d.leaderboard.filter(r => r.total === top) : [];
+    const leaderLabel = leaders.length > 1 ? 'Leaders' : 'Leader';
+    const leaderNames = leaders.map(r => r.player).join(', ') || '—';
+
     document.getElementById('stats-bar').innerHTML = `
       <div class="stat">
         <div class="stat-label">Season</div>
@@ -916,16 +933,8 @@
         <div class="stat-value" id="stat-players">0</div>
       </div>
       <div class="stat">
-        <div class="stat-label">${(() => {
-          const top = d.leaderboard[0]?.total;
-          const leaders = d.leaderboard.filter(r => r.total === top);
-          return leaders.length > 1 ? 'Leaders' : 'Leader';
-        })()}</div>
-        <div class="stat-value">${(() => {
-          const top = d.leaderboard[0]?.total;
-          const leaders = d.leaderboard.filter(r => r.total === top);
-          return leaders.map(r => r.player).join(', ') || '—';
-        })()}</div>
+        <div class="stat-label">${leaderLabel}</div>
+        <div class="stat-value">${leaderNames}</div>
       </div>
     `;
     // Trigger count-ups after the cards have animated in (CSS delays go up to ~0.85s)
@@ -936,7 +945,6 @@
   }
 
   function renderLeaderboard(d) {
-    const denom = d.played + d.abandoned;
     const total = d.leaderboard.length;
 
     // Dense ranking: tied totals share the same rank, next rank increments by 1.
@@ -984,7 +992,6 @@
         el.textContent = el.dataset.final;
       });
     } else {
-      const totalCascade = (total - 1) * 40 + 450;  // last row's delay + duration
       d.leaderboard.forEach((row, i) => {
         const rowDelay = (total - 1 - i) * 40;
         setTimeout(() => {
